@@ -1,11 +1,8 @@
-#!/usr/bin/env python
-
 from Bio.Seq import Seq
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 import os
 import pty
-import shlex
 import sys
 import subprocess
 import warnings
@@ -46,14 +43,14 @@ def invoke_kalign(input_file, output_file):
     just to be safe.
     """
     if not os.path.exists(input_file):
-        print('Input file missing')
+        print('Input file missing', file=sys.stderr)
         return 1
     # If STDIN is not a tty, kalign3 assumes that STDIN is an input file
     # and fails to detect its type.
     # Pass in a fake pty to work around this behavior, which is appropriate
     # for command-line usage but doesn't work in a headless environment.
     fakepty, alsofakepty = pty.openpty()
-    command = shlex.split(f'kalign -i {input_file} -o {output_file}')
+    command = ['kalign', '-i', input_file, '-o' output_file]
     kaligner = subprocess.Popen(command, stderr=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stdin=fakepty)
     kaligner.wait()
@@ -63,13 +60,13 @@ def invoke_kalign(input_file, output_file):
     # If Kalign fails try again with MAFFT (Kalign sometimes seg faults on some data)
     if kaligner.returncode != 0:
         with open(output_file, 'w') as out_fh:
-            command = shlex.split(f'mafft {input_file}')
+            command = ['mafft', input_file]
             mafft = subprocess.Popen(command, stdout=out_fh)
             mafft.wait()
             _, stderr = mafft.communicate()
         if mafft.returncode != 0:
-            sys.stderr.write('Error running mafft')
-            sys.stderr.write(stderr.decode('utf-8'))
+            print('Error running mafft', file=sys.stderr)
+            print(stderr.decode('utf-8'), file=sys.stderr)
             return 1
         else:
             return 0
@@ -516,11 +513,7 @@ def compressor(seqs, names, ids, og_seqs):
         else:
             new_ids.append('MultiSeq'+str(count)+'_'+str(len(same)))
             count += 1
-            name = ''
-            for s in same:
-                name += s
-                name += ','
-            new_names.append(name[:-1])
+            new_names.append(','.join(s for s in same))
             new_seqs.append(seqs[ids.index(same[0])])
             new_og_seqs[new_ids[-1]] = og_seqs[same[0]]
     return new_seqs, new_names, new_ids, new_og_seqs
@@ -529,27 +522,36 @@ def compressor(seqs, names, ids, og_seqs):
 def check_input(reference, reads):
     """Check input FASTA is occupied and doesn't use invalid characters"""
     records = []
-    invalids = ['E', 'F', 'I', 'J', 'L', 'O', 'P', 'Q', 'X', 'Z']
+    invalids = {'E', 'F', 'I', 'J', 'L', 'O', 'P', 'Q', 'X', 'Z'}
     try:
         for record in SeqIO.parse(reference, 'fasta'):
             if any(x in invalids for x in record.seq):
-                print(f'Input Error: Invalid characters detected in reference sequence')
+                print(
+                    'Input Error: Invalid characters detected in reference sequence',
+                    file=sys.stderr
+                )
                 return 1
             records.append(records)
         if len(records) != 1:
-            print('User Error: reference input should contain exactly one sequence')
+            print(
+                'User Error: reference input should contain exactly one sequence',
+                file=sys.stderr
+            )
             return 1
         records = []
         for record in SeqIO.parse(reads, 'fasta'):
             if any(x in invalids for x in record.seq):
-                print(f'Input Error: Invalid characters detected in sequence ID: {record.id}')
+                print(
+                    f'Input Error: Invalid characters detected in sequence ID: {record.id}',
+                    file=sys.stderr
+                )
                 return 1
             records.append(record)
         if len(records) == 0:
-            print('User Error: sequence FASTA file is empty')
+            print('User Error: sequence FASTA file is empty', file=sys.stderr)
             return 1
     except Exception:
-        print('User Error: improperly formatted FASTA')
+        print('User Error: improperly formatted FASTA', file=sys.stderr)
         return 1
 
 
@@ -561,7 +563,10 @@ def check_tab(tab):
         if int(tab) in [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33]:
             tab = int(tab)
         else:
-            print('User Error: Chosen translation table number is invalid. See: https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi for valid options')
+            print(
+                'User Error: Chosen translation table number is invalid. See: https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi for valid options',
+                file=sys.stderr
+            )
             return 1
     return tab
 
@@ -575,23 +580,35 @@ def genome_mode(reference, reads, start, end, compress, para, tab):
         try:
             start = int(start)-1
             end = int(end)
-        except Exception:
-            print('User Error: invalid start/end coordinate(s)')
+        except ValueError:
+            print(
+                'User Error: invalid start/end coordinate(s)',
+                file=sys.stderr
+            )
             return 1
         join = 0
         if start >= end:
-            print('User Error: start coordinate(s) must be less than the end coordinate(s)')
+            print(
+                'User Error: start coordinate(s) must be less than the end coordinate(s)',
+                file=sys.stderr
+            )
             return 1
     else:
         try:
             start = (int(start.split(',')[0])-1, int(start.split(',')[1])-1)
             end = (int(end.split(',')[0]), int(end.split(',')[1]))
-        except Exception:
-            print('User Error: invalid start/end coordinate(s)')
+        except ValueError:
+            print(
+                'User Error: invalid start/end coordinate(s)',
+                file=sys.stderr
+            )
             return 1
         join = 1
         if start[0] >= end[0] or start[1] >= end[1]:
-            print('User Error: start coordinate(s) must be less than the end coordinate(s)')
+            print(
+                'User Error: start coordinate(s) must be less than the end coordinate(s)',
+                file=sys.stderr
+            )
             return 1
 
     # Find protein sequence of gene of interest and extract the original DNA
@@ -618,7 +635,7 @@ def genome_mode(reference, reads, start, end, compress, para, tab):
             og_seqs[idd] = og_seqs[idd][:-3]
     records = [SeqRecord(seq, id=idd, description=name)]
     if len(seqs) == 0:
-        print('No homologous sequences were found')
+        print('No homologous sequences were found', file=sys.stderr)
         return 1
     combine_align(records, ids, names, seqs)
     names = dict(zip(ids, names))
@@ -695,7 +712,7 @@ def mixed_mode(reference, reads, compress, para, tab):
         og_seqs[idd] = og_seqs[idd][:-3]
     records = [SeqRecord(seq, id=idd, description=name)]
     if len(seqs) == 0:
-        print('No homologous sequences were found')
+        print('No homologous sequences were found', file=sys.stderr)
         return 1
     combine_align(records, ids, names, seqs)
     names = dict(zip(ids, names))
